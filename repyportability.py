@@ -14,9 +14,6 @@ import namespace
 import nonportable
 import virtual_namespace
 
-# WTF!?! repyportability uses repyhelper to import dylink!?!
-import repyhelper
-
 # JAC: Save the calls in case I want to restore them.   This is useful if 
 # repy ends up wanting to use either repyportability or repyhelper...
 # This is also useful if a user wants to enforce restrictions on the repy
@@ -243,69 +240,24 @@ def add_dy_support(_context):
   <Returns>
     None
   """
-  # Add dylink support
-  repyhelper.translate_and_import("dylink.r2py", callfunc = 'initialize')
-  
-  # The dy_* functions are only added to the namespace after init_dylink is called.
-  init_dylink(_context,{})
+  import repy
 
-  original_import_module = _context['dy_import_module']
+  # Let's assume dylink.r2py really exists, etc., and read in its code
+  dylink_file = open("dylink.r2py", "r")
+  dylink_code = dylink_file.read()
+  dylink_file.close()
 
-  def _new_dy_import_module_symbols(module, callfunc="import"):
-    # Remember the path we are currently in. We need to change to 
-    # this script's dir (assuming it also contains dylink.r2py and 
-    # rest of the Repy runtime and libraries) so that dylink is 
-    # able to link in code from the runtime.
-    # This is required due to Repy safety measures that inhibit 
-    # dylink to access files outside of its directory. 
-    # Once dylink is done, we return to the previously-current 
-    # working dir.
-    previous_cwd = os.getcwd()
-    repyportability_dir = os.path.dirname(os.path.realpath(__file__))
-    os.chdir(repyportability_dir)
+  # This is dylink's "sandbox" that we will later evaluate
+  dylink_virtual_namespace = createvirtualnamespace(dylink_code, "dylink.r2py")
 
-    # If we are using repyportability, we want to check all pythonpath for
-    # the file we are looking to import.
-    COMMON_EXTENSIONS = ["", ".py", ".repy",".py.repy", ".pp", ".r2py"] 
-    
-    # Check all combination of filepath with file extension and try to import the
-    # file if we have found it.
-    for pathdir in sys.path:
-      possiblefilenamewithpath = os.path.join(pathdir, module)
-   
-      # If we have found a path, then we can import the module and
-      # return so we do not continue to look in other paths.
-      if os.path.isfile(possiblefilenamewithpath):
-        filenamewithpath = possiblefilenamewithpath
-        importedmodule = original_import_module(filenamewithpath, callfunc)
-        os.chdir(previous_cwd)
-        return importedmodule
+  # Provide the Repy API too
+  clean_context = repy.get_safe_context([])
 
-    # If we don't find the file, we just call down to dylink, and
-    # let it raise the appropriate error.
-    try:
-      importedmodule = original_import_module(module, callfunc)
-      return importedmodule
-    except:
-      raise
-    finally:
-      os.chdir(previous_cwd)
+  # Run through dylink with the Repy API in place, store the "result"
+  # (i.e. dylink function definitions)
+  dylink_context = dylink_virtual_namespace.evaluate(clean_context)
 
-  _context['dy_import_module'] = _new_dy_import_module_symbols
-
-
-  # Make our own `dy_import_module_symbols` and  add it to the context.
-  # It is not currently possible to use the real one (details at ticket #1046)
-  def _dy_import_module_symbols(module,new_callfunc="import"):
-    new_context = _context['dy_import_module'](module, new_callfunc)._context
-    # Copy in the new symbols into our namespace.
-    for symbol in new_context:  
-      if symbol not in _context: # Prevent the imported object from destroying our namespace.
-        _context[symbol] = new_context[symbol]
-
-
- 
-  _context['dy_import_module_symbols'] = _dy_import_module_symbols
-
-
+  # Call into dylink's init so that it puts its functions etc. into 
+  # the `_context` our caller supplied.
+  dylink_context["init_dylink"](_context, {})
 
